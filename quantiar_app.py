@@ -6,6 +6,9 @@ import numpy as np
 import requests
 import matplotlib.pyplot as plt
 from datetime import datetime
+from matplotlib.backends.backend_pdf import PdfPages
+from io import BytesIO
+
 
 st.set_page_config(page_title="QuantiAR", layout="wide")
 
@@ -162,6 +165,108 @@ def weights_are_valid(weights_sum):
     return abs(weights_sum - 1.0) <= WEIGHT_TOLERANCE
 
 
+def create_pdf_report(
+    selected_assets,
+    weights,
+    analysis_start,
+    analysis_end,
+    metrics,
+    cartera_ars,
+    mep_norm,
+    inflacion_base,
+    cumulative_usd,
+    corr
+):
+    buffer = BytesIO()
+
+    with PdfPages(buffer) as pdf:
+
+        fig = plt.figure(figsize=(8.27, 11.69))
+        fig.suptitle("QuantiAR - Portfolio Report", fontsize=22, fontweight="bold", y=0.96)
+
+        ax = fig.add_subplot(111)
+        ax.axis("off")
+
+        portfolio_text = "\n".join([
+            f"{asset}: {weight:.2%}"
+            for asset, weight in zip(selected_assets, weights)
+        ])
+
+        summary_text = f"""
+Período analizado: {analysis_start} a {analysis_end}
+
+COMPOSICIÓN DEL PORTFOLIO
+{portfolio_text}
+
+PERFORMANCE
+Retorno USD: {metrics['retorno_usd']:.2%}
+Retorno ARS nominal: {metrics['retorno_ars_nominal']:.2%}
+Retorno real: {metrics['retorno_real']:.2%}
+CAGR real: {metrics['cagr_real']:.2%}
+
+BENCHMARKS
+Dólar MEP: {metrics['mep_nominal']:.2%}
+Inflación: {metrics['inflacion']:.2%}
+MEP real: {metrics['mep_real']:.2%}
+
+RIESGO
+Sharpe nominal ARS: {metrics['sharpe_nominal_ars']:.2f}
+Volatilidad nominal ARS: {metrics['volatilidad_nominal_ars']:.2%}
+Max Drawdown USD: {metrics['max_drawdown_usd']:.2%}
+"""
+
+        ax.text(
+            0.05,
+            0.90,
+            summary_text,
+            fontsize=12,
+            va="top",
+            family="monospace"
+        )
+
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.plot(cartera_ars, label="Cartera ARS")
+        ax.plot(mep_norm, label="Dólar MEP")
+        ax.plot(inflacion_base, label="Inflación")
+        ax.set_title("Cartera vs Dólar MEP vs Inflación")
+        ax.set_ylabel("Base 1")
+        ax.grid(True)
+        ax.legend()
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.plot(cumulative_usd, label="Cartera USD")
+        ax.set_title("Performance de la cartera en USD")
+        ax.set_ylabel("Base 1")
+        ax.grid(True)
+        ax.legend()
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        im = ax.imshow(corr.values)
+        ax.set_xticks(np.arange(len(corr.columns)))
+        ax.set_yticks(np.arange(len(corr.index)))
+        ax.set_xticklabels(corr.columns)
+        ax.set_yticklabels(corr.index)
+
+        for i in range(len(corr.index)):
+            for j in range(len(corr.columns)):
+                ax.text(j, i, f"{corr.iloc[i, j]:.2f}", ha="center", va="center")
+
+        ax.set_title("Matriz de correlación")
+        fig.colorbar(im, ax=ax)
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+    buffer.seek(0)
+    return buffer
+
+
 # =========================
 # UI
 # =========================
@@ -180,10 +285,6 @@ if saved_portfolios:
 else:
     portfolio_to_load = "Nuevo portfolio"
 
-
-# =========================
-# LEER PARAMETROS DE URL
-# =========================
 
 query_params = st.query_params
 
@@ -220,10 +321,6 @@ else:
     default_weights = None
 
 
-# =========================
-# FECHA DE ANÁLISIS
-# =========================
-
 st.sidebar.subheader("Fecha de análisis")
 
 min_date = pd.to_datetime(MIN_DATA_DATE).date()
@@ -245,10 +342,6 @@ analysis_start_date = st.sidebar.date_input(
 
 st.sidebar.caption("La app trae hasta 10 años de data y analiza desde la fecha elegida.")
 
-
-# =========================
-# ACTIVOS
-# =========================
 
 selected_assets = st.sidebar.multiselect(
     "Elegí activos",
@@ -468,6 +561,28 @@ if selected_assets:
                 }])
 
                 st.dataframe(results_df)
+
+                metrics_for_pdf = results_df.iloc[0].to_dict()
+
+                pdf_buffer = create_pdf_report(
+                    selected_assets=selected_assets,
+                    weights=weights,
+                    analysis_start=cartera_ars.index.min().date(),
+                    analysis_end=cartera_ars.index.max().date(),
+                    metrics=metrics_for_pdf,
+                    cartera_ars=cartera_ars,
+                    mep_norm=mep_norm,
+                    inflacion_base=inflacion_base,
+                    cumulative_usd=cumulative_usd,
+                    corr=corr
+                )
+
+                st.download_button(
+                    label="📄 Exportar PDF",
+                    data=pdf_buffer,
+                    file_name="quantiar_portfolio_report.pdf",
+                    mime="application/pdf"
+                )
 
 else:
     st.info("Elegí al menos un activo para empezar.")
