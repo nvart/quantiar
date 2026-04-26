@@ -13,11 +13,9 @@ st.title("📊 QuantiAR - Portfolio Analytics")
 st.caption("Backtesting de carteras con comparación vs Dólar MEP e inflación argentina.")
 
 END_DATE = datetime.today().strftime("%Y-%m-%d")
-
-# Traemos hasta 10 años de data
 MIN_DATA_DATE = (pd.Timestamp.today() - pd.DateOffset(years=10)).strftime("%Y-%m-%d")
 DEFAULT_ANALYSIS_DATE = "2020-01-01"
-
+WEIGHT_TOLERANCE = 0.001
 
 AVAILABLE_TICKERS = {
     "SPY": "SPY",
@@ -34,19 +32,17 @@ PORTFOLIOS_FILE = "portfolios.json"
 def load_saved_portfolios():
     if not os.path.exists(PORTFOLIOS_FILE):
         return {}
-
-    with open(PORTFOLIOS_FILE, "r") as file:
-        return json.load(file)
+    try:
+        with open(PORTFOLIOS_FILE, "r") as file:
+            return json.load(file)
+    except Exception:
+        return {}
 
 
 def save_portfolios(portfolios):
     with open(PORTFOLIOS_FILE, "w") as file:
         json.dump(portfolios, file, indent=4)
 
-
-# =========================
-# DATA
-# =========================
 
 @st.cache_data
 def download_yahoo(ticker, start_date):
@@ -128,10 +124,6 @@ def get_inflacion_arg(start_date):
     return inflacion_acum
 
 
-# =========================
-# FINANCE FUNCTIONS
-# =========================
-
 def calculate_returns(prices):
     return prices.pct_change().dropna()
 
@@ -164,6 +156,11 @@ def backtest(returns, weights):
     portfolio_returns = returns.dot(weights)
     cumulative = (1 + portfolio_returns).cumprod()
     return portfolio_returns, cumulative
+
+
+def weights_are_valid(weights_sum):
+    return abs(weights_sum - 1.0) <= WEIGHT_TOLERANCE
+
 
 # =========================
 # UI
@@ -198,19 +195,19 @@ if "assets" in query_params and "weights" in query_params:
     try:
         url_assets = query_params["assets"].split(",")
         url_weights = [float(x) for x in query_params["weights"].split(",")]
-    except:
+    except Exception:
         url_assets = []
         url_weights = []
 
 if "start" in query_params:
     try:
         url_start_date = pd.to_datetime(query_params["start"]).date()
-    except:
+    except Exception:
         url_start_date = None
 
 
 if url_assets and url_weights:
-    default_assets = url_assets
+    default_assets = [a for a in url_assets if a in AVAILABLE_TICKERS]
     default_weights = url_weights
 
 elif portfolio_to_load != "Nuevo portfolio":
@@ -232,7 +229,12 @@ st.sidebar.subheader("Fecha de análisis")
 min_date = pd.to_datetime(MIN_DATA_DATE).date()
 max_date = pd.to_datetime(END_DATE).date()
 
-default_date = url_start_date if url_start_date else pd.to_datetime(DEFAULT_ANALYSIS_DATE).date()
+if portfolio_to_load != "Nuevo portfolio" and "start_date" in saved_portfolios.get(portfolio_to_load, {}):
+    default_date = pd.to_datetime(saved_portfolios[portfolio_to_load]["start_date"]).date()
+elif url_start_date:
+    default_date = url_start_date
+else:
+    default_date = pd.to_datetime(DEFAULT_ANALYSIS_DATE).date()
 
 analysis_start_date = st.sidebar.date_input(
     "Analizar desde",
@@ -260,21 +262,23 @@ weights = []
 
 if selected_assets:
 
-    # Inicializamos pesos en session_state
     if "portfolio_weights" not in st.session_state:
         st.session_state.portfolio_weights = {}
 
-    # Cargar pesos desde portfolio guardado o URL
     if default_weights:
         for asset, weight in zip(default_assets, default_weights):
             if asset in selected_assets:
                 st.session_state.portfolio_weights[asset] = weight
+                st.session_state[f"weight_{asset}"] = float(weight * 100)
 
-    # Botón Equal Weight
     if st.sidebar.button("Equal Weight"):
-        equal_weight = 1 / len(selected_assets)
+        equal_pct = round(100 / len(selected_assets), 4)
+
         for asset in selected_assets:
-            st.session_state.portfolio_weights[asset] = equal_weight
+            st.session_state[f"weight_{asset}"] = equal_pct
+            st.session_state.portfolio_weights[asset] = equal_pct / 100
+
+        st.rerun()
 
     for asset in selected_assets:
         default_value = st.session_state.portfolio_weights.get(
@@ -282,13 +286,17 @@ if selected_assets:
             1 / len(selected_assets)
         )
 
+        input_key = f"weight_{asset}"
+
+        if input_key not in st.session_state:
+            st.session_state[input_key] = float(default_value * 100)
+
         weight_pct = st.sidebar.number_input(
             f"{asset} (%)",
             min_value=0.0,
             max_value=100.0,
-            value=float(default_value * 100),
-            step=5.0,
-            key=f"weight_{asset}"
+            step=1.0,
+            key=input_key
         )
 
         weight = weight_pct / 100
@@ -312,7 +320,6 @@ if selected_assets:
     with col_link:
         generate_link = st.button("Link")
 
-
     if generate_link and selected_assets:
         assets_str = ",".join(selected_assets)
         weights_str = ",".join([str(round(w, 4)) for w in weights])
@@ -324,11 +331,10 @@ if selected_assets:
         st.sidebar.success("Link generado")
         st.sidebar.code(full_url)
 
-
     if save_button:
         if not portfolio_name:
             st.sidebar.error("Poné un nombre para guardar.")
-        elif not np.isclose(weights_sum, 1.0):
+        elif not weights_are_valid(weights_sum):
             st.sidebar.error("Los pesos deben sumar 100%.")
         else:
             saved_portfolios[portfolio_name] = {
@@ -339,24 +345,21 @@ if selected_assets:
 
             save_portfolios(saved_portfolios)
             st.sidebar.success(f"Portfolio '{portfolio_name}' guardado.")
+            st.rerun()
 
-
-    if not np.isclose(weights_sum, 1.0):
+    if not weights_are_valid(weights_sum):
         st.sidebar.error("Los pesos deben sumar 100%.")
     else:
         if run:
             with st.spinner("Calculando QuantiAR..."):
 
                 prices = download_prices(selected_assets, MIN_DATA_DATE)
-
-                # Filtramos desde fecha elegida por el usuario
                 prices = prices[prices.index >= pd.to_datetime(analysis_start_date)]
 
                 returns = calculate_returns(prices)
 
                 portfolio_returns, cumulative_usd = backtest(returns, weights)
 
-                # MEP histórico
                 mep_series = get_mep_historico()
 
                 common_index = cumulative_usd.index.intersection(mep_series.index)
@@ -367,7 +370,6 @@ if selected_assets:
 
                 cartera_ars = cumulative_usd * mep_norm
 
-                # Inflación
                 inflacion = get_inflacion_arg(cartera_ars.index.min())
                 inflacion_diaria = inflacion.reindex(cartera_ars.index, method="ffill").dropna()
 
@@ -375,7 +377,6 @@ if selected_assets:
                 mep_norm = mep_norm.loc[inflacion_diaria.index]
                 inflacion_base = inflacion_diaria / inflacion_diaria.iloc[0]
 
-                # Métricas
                 ret_usd = cumulative_usd.loc[cartera_ars.index].iloc[-1] - 1
                 ret_ars = cartera_ars.iloc[-1] - 1
                 ret_mep = mep_norm.iloc[-1] - 1
@@ -442,7 +443,7 @@ if selected_assets:
                 ax2.grid(True)
                 ax2.legend()
                 st.pyplot(fig2)
-        
+
                 st.subheader("Matriz de correlación")
 
                 corr = returns.corr()
@@ -470,4 +471,3 @@ if selected_assets:
 
 else:
     st.info("Elegí al menos un activo para empezar.")
-
