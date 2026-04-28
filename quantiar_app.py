@@ -1353,14 +1353,16 @@ with tab_markowitz:
         "No contempla costos, impuestos, spreads ni liquidez."
     )
 
-    max_weight = st.slider(
+    max_weight_pct = st.slider(
         "Peso máximo por activo",
-        min_value=0.10,
-        max_value=1.00,
-        value=0.50,
-        step=0.05,
-        format="%.0f%%"
+        min_value=10,
+        max_value=100,
+        value=50,
+        step=5,
+        format="%d%%"
     )
+
+    max_weight = max_weight_pct / 100
 
     if len(selected_assets) < 2:
         st.warning("Seleccioná al menos 2 activos en Backtesting.")
@@ -1421,15 +1423,28 @@ with tab_markowitz:
             mode="markers",
             name="Carteras simuladas",
             marker=dict(
-                size=6,
+                size=7,
                 color=frontier["sharpe"],
-                colorscale="Blues",
+                colorscale=[
+                    [0.0, "#1C1F26"],
+                    [0.35, "#1F6F8B"],
+                    [0.70, "#00A3E0"],
+                    [1.0, "#D7ECF7"]
+                ],
                 showscale=True,
-                colorbar=dict(title="Sharpe"),
-                opacity=0.65
+                colorbar=dict(
+                    title="Sharpe",
+                    thickness=14,
+                    len=0.75
+                ),
+                opacity=0.72,
+                line=dict(width=0)
             ),
             text=[
-                f"Sharpe: {s:.2f}<br>Retorno: {r:.2%}<br>Vol: {v:.2%}"
+                f"<b>Cartera simulada</b><br>"
+                f"Sharpe: {s:.2f}<br>"
+                f"Retorno esperado: {r:.2%}<br>"
+                f"Volatilidad: {v:.2%}"
                 for s, r, v in zip(frontier["sharpe"], frontier["return"], frontier["volatility"])
             ],
             hoverinfo="text"
@@ -1438,46 +1453,103 @@ with tab_markowitz:
         fig_frontier.add_trace(go.Scatter(
             x=[max_vol],
             y=[max_ret],
-            mode="markers",
+            mode="markers+text",
             name="Max Sharpe",
-            marker=dict(size=16, symbol="star", color="#00A3E0"),
-            text=[f"Max Sharpe<br>Retorno: {max_ret:.2%}<br>Vol: {max_vol:.2%}<br>Sharpe: {max_sharpe:.2f}"],
+            marker=dict(
+                size=22,
+                symbol="star",
+                color="#00A3E0",
+                line=dict(color="white", width=1.5)
+            ),
+            text=["Max Sharpe"],
+            textposition="top center",
+            hovertext=[
+                f"<b>Max Sharpe</b><br>"
+                f"Retorno esperado: {max_ret:.2%}<br>"
+                f"Volatilidad: {max_vol:.2%}<br>"
+                f"Sharpe: {max_sharpe:.2f}"
+            ],
             hoverinfo="text"
         ))
 
         fig_frontier.add_trace(go.Scatter(
             x=[min_vol],
             y=[min_ret],
-            mode="markers",
-            name="Min Vol",
-            marker=dict(size=14, symbol="diamond", color="#7A8CA0"),
-            text=[f"Min Vol<br>Retorno: {min_ret:.2%}<br>Vol: {min_vol:.2%}<br>Sharpe: {min_sharpe:.2f}"],
+            mode="markers+text",
+            name="Min Volatility",
+            marker=dict(
+                size=18,
+                symbol="diamond",
+                color="#D7ECF7",
+                line=dict(color="#0B1F33", width=1.5)
+            ),
+            text=["Min Vol"],
+            textposition="bottom center",
+            hovertext=[
+                f"<b>Min Volatility</b><br>"
+                f"Retorno esperado: {min_ret:.2%}<br>"
+                f"Volatilidad: {min_vol:.2%}<br>"
+                f"Sharpe: {min_sharpe:.2f}"
+            ],
             hoverinfo="text"
         ))
 
         fig_frontier.add_trace(go.Scatter(
             x=[current_vol],
             y=[current_ret],
-            mode="markers",
+            mode="markers+text",
             name="Portfolio actual",
-            marker=dict(size=14, symbol="circle", color="#F39C12"),
-            text=[f"Actual<br>Retorno: {current_ret:.2%}<br>Vol: {current_vol:.2%}<br>Sharpe: {current_sharpe:.2f}"],
+            marker=dict(
+                size=18,
+                symbol="circle",
+                color="#F39C12",
+                line=dict(color="white", width=1.5)
+            ),
+            text=["Actual"],
+            textposition="top right",
+            hovertext=[
+                f"<b>Portfolio actual</b><br>"
+                f"Retorno esperado: {current_ret:.2%}<br>"
+                f"Volatilidad: {current_vol:.2%}<br>"
+                f"Sharpe: {current_sharpe:.2f}"
+            ],
             hoverinfo="text"
         ))
 
         fig_frontier.update_layout(
-            title="Frontera eficiente - Retorno esperado vs Volatilidad",
+            title=dict(
+                text="Frontera eficiente — Retorno esperado vs Volatilidad",
+                font=dict(size=22, color="#FAFAFA")
+            ),
             template="plotly_dark",
-            height=600,
+            height=650,
             hovermode="closest",
             paper_bgcolor="#0E1117",
             plot_bgcolor="#0E1117",
             font=dict(color="#FAFAFA"),
-            margin=dict(l=20, r=20, t=70, b=20)
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            ),
+            margin=dict(l=30, r=30, t=90, b=40)
         )
 
-        fig_frontier.update_xaxes(title="Volatilidad anualizada", tickformat=".0%", gridcolor="#2c2f36")
-        fig_frontier.update_yaxes(title="Retorno esperado anualizado", tickformat=".0%", gridcolor="#2c2f36")
+        fig_frontier.update_xaxes(
+            title="Volatilidad anualizada",
+            tickformat=".0%",
+            gridcolor="#2c2f36",
+            zeroline=False
+        )
+
+        fig_frontier.update_yaxes(
+            title="Retorno esperado anualizado",
+            tickformat=".0%",
+            gridcolor="#2c2f36",
+            zeroline=False
+        )
 
         st.plotly_chart(fig_frontier, use_container_width=True)
 
@@ -1490,13 +1562,12 @@ with tab_markowitz:
             "Min Volatility": min_vol_weights
         })
 
-        st.dataframe(
-            weights_comparison.style.format({
-                "Peso actual": "{:.2%}",
-                "Max Sharpe": "{:.2%}",
-                "Min Volatility": "{:.2%}"
-            })
-        )
+        weights_display = weights_comparison.copy()
+        weights_display["Peso actual"] = weights_display["Peso actual"].map(lambda x: f"{x:.2%}")
+        weights_display["Max Sharpe"] = weights_display["Max Sharpe"].map(lambda x: f"{x:.2%}")
+        weights_display["Min Volatility"] = weights_display["Min Volatility"].map(lambda x: f"{x:.2%}")
+
+        st.dataframe(weights_display)
 
         col_apply_1, col_apply_2 = st.columns(2)
 
@@ -1539,13 +1610,12 @@ with tab_markowitz:
             }
         ])
 
-        st.dataframe(
-            metrics_markowitz.style.format({
-                "Retorno esperado": "{:.2%}",
-                "Volatilidad": "{:.2%}",
-                "Sharpe": "{:.2f}"
-            })
-        )
+        metrics_display = metrics_markowitz.copy()
+        metrics_display["Retorno esperado"] = metrics_display["Retorno esperado"].map(lambda x: f"{x:.2%}")
+        metrics_display["Volatilidad"] = metrics_display["Volatilidad"].map(lambda x: f"{x:.2%}")
+        metrics_display["Sharpe"] = metrics_display["Sharpe"].map(lambda x: f"{x:.2f}")
+
+        st.dataframe(metrics_display)
 
         pdf_markowitz = create_markowitz_pdf_report(
             selected_assets=available_assets,
